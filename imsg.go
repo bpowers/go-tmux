@@ -5,6 +5,7 @@
 package tmux
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"fmt"
@@ -18,7 +19,7 @@ const (
 	ImsgfHasFD = 1
 
 	IbufReadLen = 65535
-	MaxImsgLen = 16384
+	MaxImsgLen  = 16384
 )
 
 var (
@@ -33,16 +34,7 @@ type WireSerializer interface {
 
 type Imsg struct {
 	Header ImsgHeader
-	Data []byte
-}
-
-type ImsgBuffer struct {
-	conn   *net.UnixConn
-	mu     sync.Mutex
-	wQueue [][]byte
-	// Linux kernel defines pid_t as a 32-bit signed int in
-	// include/uapi/asm-generic/posix_types.h
-	pid int32
+	Data   []byte
 }
 
 // ImsgHeader describes the current message.
@@ -96,6 +88,19 @@ func (ihdr *ImsgHeader) InitFromWireBytes(buf []byte) error {
 	return nil
 }
 
+type ImsgBuffer struct {
+	conn       *net.UnixConn
+	mu         sync.Mutex
+	wQueue     [][]byte
+	rScratch   []byte
+	rInbetween bytes.Buffer
+	rBuf       *bufio.Reader
+	msgs       chan *Imsg
+	// Linux kernel defines pid_t as a 32-bit signed int in
+	// include/uapi/asm-generic/posix_types.h
+	pid int32
+}
+
 func NewImsgBuffer(path string) (*ImsgBuffer, error) {
 	addr, err := net.ResolveUnixAddr("unix", path)
 	if err != nil {
@@ -106,10 +111,12 @@ func NewImsgBuffer(path string) (*ImsgBuffer, error) {
 		return nil, fmt.Errorf("DialUnix(%s): %s", path, err)
 	}
 	ibuf := &ImsgBuffer{
-		conn: conn,
-		pid:  int32(os.Getpid()),
+		conn:     conn,
+		pid:      int32(os.Getpid()),
+		rScratch: make([]byte, IbufReadLen),
 	}
-	go ibuf.read()
+	ibuf.rBuf = bufio.NewReader(&ibuf.rInbetween)
+	go ibuf.reader()
 
 	return ibuf, nil
 }
@@ -126,7 +133,6 @@ func (ibuf *ImsgBuffer) Compose(kind, peerID, pid uint32, data WireSerializer) e
 	if header.Pid == 0 {
 		header.Pid = uint32(ibuf.pid)
 	}
-	
 	buf := make([]byte, size)
 
 	// TODO: rights/send FD
@@ -162,18 +168,60 @@ func (ibuf *ImsgBuffer) Flush() {
 }
 
 func (ibuf *ImsgBuffer) Get() (*Imsg, error) {
+	result := <-ibuf.msgs
+	if result == nil {
+		return nil, fmt.Errorf("channel closed")
+	}
 
-	// read header
-
-	// check len
-
-	// TODO: FD passing
-
-	// get data
-
-	return nil, nil
+	return result, nil
 }
 
-func (ibuf *ImsgBuffer) read() int {
-	return -1
+func (ibuf *ImsgBuffer) reader() {
+	hBytes := make([]byte, imsgHeaderLen)
+
+	for {
+		n, _, _, _, err := ibuf.conn.ReadMsgUnix(ibuf.rScratch, nil)
+		if err != nil {
+			log.Printf("ReadMsgUnix: %s", err)
+			return
+		}
+
+		buf := ibuf.rScratch[:n]
+		ibuf.rInbetween.Write(buf)
+
+		for {
+			n, err = ibuf.rBuf.Read(hBytes)
+			if err != nil {
+				log.Printf("rBuf.Read: %s", err)
+				return
+			} else if n != imsgHeaderLen {
+				log.Printf("rBuf.Read short: %d/%d", n, imsgHeaderLen)
+				return
+			}
+
+			var header ImsgHeader
+			if err = header.InitFromWireBytes(hBytes); err != nil {
+				log.Printf("InitFromWireBytes: %s", err)
+				return
+			}
+
+			// TODO: rights/receive FD
+
+			var payload []byte
+			payloadLen := int(header.Len) - imsgHeaderLen
+			if payloadLen > 0 {
+				payload := make([]byte, payloadLen)
+				n, err := ibuf.rBuf.Read(payload)
+				if err != nil {
+					log.Printf("rBuf.Read 2: %s", err)
+					return
+				} else if n != payloadLen {
+					log.Printf("rBuf.Read 2 short: %d/%d", n, payloadLen)
+					return
+				}
+			}
+			imsg := &Imsg{header, payload}
+			ibuf.msgs <- imsg
+		}
+	}
 }
