@@ -12,5 +12,17 @@ func TestListSessions(t *testing.T) {
 	sessions := ListSessions()
 	if len(sessions) != 0 {
 		t.Errorf("non-zero session length")
+		return
 	}
+}
+
+func TestClient(t *testing.T) {
+	path := SocketPath("")
+
+	client, err := NewClient(path)
+	if err != nil {
+		t.Errorf("NewClient: %s", err)
+		return
+	}
+	_ = client
 }
