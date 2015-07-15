@@ -12,7 +12,7 @@ import (
 	"path"
 )
 
-//go:generate stringer -type MsgType
+//go:generate stringer -type MsgType,ClientFlag -output enum_strings.go
 
 const (
 	ProtocolVersion = 8
@@ -51,6 +51,29 @@ const (
 	MsgWakeup
 )
 
+const (
+	ClientTerminal ClientFlag = 1 << iota
+	_
+	ClientExit
+	ClientRedraw
+	ClientStatus
+	CientRepeat
+	ClientSuspended
+	ClientBad
+	ClientIdentify
+	ClientDead
+	ClientBorders
+	ClientReadOnly
+	ClientRedrawWindow
+	ClientControl
+	ClientControlControl
+	ClientFocused
+	ClientUTF8
+	Client256Colours
+	ClientIdentified
+)
+
+type ClientFlag int
 type MsgType uint32
 
 type MsgCommandData struct {
@@ -135,7 +158,7 @@ func NewClient(path string) (*Client, error) {
 	return c, nil
 }
 
-func (c *Client) sendIdentify(flags int) error {
+func (c *Client) sendIdentify(flags ClientFlag) error {
 	fmt.Printf("sendIdnet\n")
 	//c.WriteServer(MsgIdentifyFlags, &Int32{int32(flags)})
 	//c.WriteServer(MsgIdentifyClientPid, &Int32{int32(os.Getpid())})
