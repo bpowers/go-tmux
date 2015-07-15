@@ -29,10 +29,24 @@ func TestClient(t *testing.T) {
 	client.Flush()
 
 	for {
-		msg, err := client.Ibuf.Get()
-		if err == nil {
-			t.Errorf("client: %s", err)
+		imsg, err := client.Ibuf.Get()
+		if err != nil {
+			if err != ImsgBufferClosed {
+				t.Errorf("client: %s", err)
+			}
+			break
 		}
-		fmt.Printf("msg: %#v\n", msg)
+		kind := MsgType(imsg.Header.Type)
+		if kind == MsgStdin || kind == MsgStdout {
+			var payload MsgStdioData
+			err := payload.InitFromWireBytes(imsg.Data)
+			if err != nil {
+				t.Errorf("payload.InitFromWireBytes: %s", err)
+				return
+			}
+			fmt.Printf("imsg(%s): %s\n", kind, payload.String())
+		} else {
+			fmt.Printf("imsg(%s)\n", kind)
+		}
 	}
 }

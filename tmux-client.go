@@ -116,19 +116,60 @@ func (m *MsgCommandData) InitFromWireBytes(buf []byte) error {
 	return nil
 }
 
-type MsgStdinData struct {
-	size uint64
-	data []byte
+type MsgStdioData struct {
+	Size int64
+	Data []byte
 }
 
-type MsgStdoutData struct {
-	size uint64
-	data []byte
+func (m *MsgStdioData) WireLen() int {
+	return len(m.Data) + 8
 }
 
-type MsgStderrData struct {
-	size uint64
-	data []byte
+func (m *MsgStdioData) WireBytes(buf []byte) error {
+	var err error
+	var bb bytes.Buffer
+
+	m.Size = int64(len(m.Data))
+	if err = binary.Write(&bb, binary.LittleEndian, int64(m.Size)); err != nil {
+		return fmt.Errorf("i(%d) write: %s", int64(m.Size), err)
+	}
+	for _, b := range m.Data {
+		bb.WriteByte(b)
+	}
+	bbuf := bb.Bytes()
+	if len(buf) < len(bbuf) {
+		return fmt.Errorf("StdioData 1 bad len %d/%d/4", len(buf), len(bbuf))
+	}
+	copy(buf, bbuf)
+
+	return nil
+}
+
+func (m *MsgStdioData) InitFromWireBytes(buf []byte) error {
+	if len(buf) < 8 {
+		m.Data = nil
+		m.Size = 0
+		return nil
+	}
+	size := int64(binary.LittleEndian.Uint64(buf[:8]))
+	buf = buf[8:]
+	if size < int64(len(buf)) {
+		buf = buf[:size]
+	}
+
+	m.Data = make([]byte, len(buf))
+	copy(m.Data, buf)
+	m.Size = size
+
+	return nil
+}
+
+func (m *MsgStdioData) String() string {
+	end := bytes.IndexByte(m.Data, 0)
+	if end < 0 {
+		end = len(m.Data)
+	}
+	return string(m.Data[:end])
 }
 
 func SocketPath(prefix string) string {
@@ -151,7 +192,7 @@ func NewClient(path string) (*Client, error) {
 		return nil, fmt.Errorf("newImsgBuffer: %s", err)
 	}
 
-	if err := c.sendIdentify(0); err != nil {
+	if err := c.sendIdentify(ClientControl); err != nil {
 		return nil, fmt.Errorf("sendIdentify: %s", err)
 	}
 
@@ -159,9 +200,8 @@ func NewClient(path string) (*Client, error) {
 }
 
 func (c *Client) sendIdentify(flags ClientFlag) error {
-	fmt.Printf("sendIdnet\n")
-	//c.WriteServer(MsgIdentifyFlags, &Int32{int32(flags)})
-	//c.WriteServer(MsgIdentifyClientPid, &Int32{int32(os.Getpid())})
+	c.WriteServer(MsgIdentifyFlags, &Int32{int32(flags)})
+	c.WriteServer(MsgIdentifyClientPid, &Int32{int32(os.Getpid())})
 	c.WriteServer(MsgIdentifyDone, &Nil{})
 
 	return nil

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -24,6 +25,8 @@ const (
 
 var (
 	imsgHeaderLen = (&ImsgHeader{}).WireLen()
+
+	ImsgBufferClosed = fmt.Errorf("Buffer channel closed")
 )
 
 type WireSerializer interface {
@@ -174,7 +177,7 @@ func (ibuf *ImsgBuffer) Flush() {
 func (ibuf *ImsgBuffer) Get() (*Imsg, error) {
 	result := <-ibuf.msgs
 	if result == nil {
-		return nil, fmt.Errorf("channel closed")
+		return nil, ImsgBufferClosed
 	}
 
 	return result, nil
@@ -195,10 +198,11 @@ func (ibuf *ImsgBuffer) reader() {
 		ibuf.rInbetween.Write(buf)
 
 		for {
-			log.Printf("read")
 			n, err = ibuf.rBuf.Read(hBytes)
-			log.Printf("read done %d", n)
-			if err != nil {
+			if err == io.EOF {
+				close(ibuf.msgs)
+				return
+			} else if err != nil {
 				log.Printf("rBuf.Read: %s", err)
 				return
 			} else if n != imsgHeaderLen {
@@ -217,7 +221,7 @@ func (ibuf *ImsgBuffer) reader() {
 			var payload []byte
 			payloadLen := int(header.Len) - imsgHeaderLen
 			if payloadLen > 0 {
-				payload := make([]byte, payloadLen)
+				payload = make([]byte, payloadLen)
 				n, err := ibuf.rBuf.Read(payload)
 				if err != nil {
 					log.Printf("rBuf.Read 2: %s", err)
