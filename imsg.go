@@ -8,8 +8,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"log"
+	"net"
 	"os"
 	"sync"
 )
@@ -31,8 +31,13 @@ type WireSerializer interface {
 	WireLen() int
 }
 
+type Imsg struct {
+	Header ImsgHeader
+	Data []byte
+}
+
 type ImsgBuffer struct {
-	conn   io.ReadWriteCloser
+	conn   *net.UnixConn
 	mu     sync.Mutex
 	wQueue [][]byte
 	// Linux kernel defines pid_t as a 32-bit signed int in
@@ -91,11 +96,22 @@ func (ihdr *ImsgHeader) InitFromWireBytes(buf []byte) error {
 	return nil
 }
 
-func NewImsgBuffer(conn io.ReadWriteCloser) *ImsgBuffer {
-	return &ImsgBuffer{
+func NewImsgBuffer(path string) (*ImsgBuffer, error) {
+	addr, err := net.ResolveUnixAddr("unix", path)
+	if err != nil {
+		return nil, fmt.Errorf("ResolveAddrUnix(%s): %s", path, err)
+	}
+	conn, err := net.DialUnix("unix", nil, addr)
+	if err != nil {
+		return nil, fmt.Errorf("DialUnix(%s): %s", path, err)
+	}
+	ibuf := &ImsgBuffer{
 		conn: conn,
 		pid:  int32(os.Getpid()),
 	}
+	go ibuf.read()
+
+	return ibuf, nil
 }
 
 func (ibuf *ImsgBuffer) Compose(kind, peerID, pid uint32, data WireSerializer) error {
@@ -135,7 +151,7 @@ func (ibuf *ImsgBuffer) Flush() {
 	defer ibuf.mu.Unlock()
 
 	for _, buf := range ibuf.wQueue {
-		n, err := ibuf.conn.Write(buf)
+		n, _, err := ibuf.conn.WriteMsgUnix(buf, nil, nil)
 		if err != nil {
 			log.Printf("ibuf.conn.Write: %s", err)
 		} else if n != len(buf) {
@@ -143,4 +159,21 @@ func (ibuf *ImsgBuffer) Flush() {
 		}
 	}
 	ibuf.wQueue = nil
+}
+
+func (ibuf *ImsgBuffer) Get() (*Imsg, error) {
+
+	// read header
+
+	// check len
+
+	// TODO: FD passing
+
+	// get data
+
+	return nil, nil
+}
+
+func (ibuf *ImsgBuffer) read() int {
+	return -1
 }
