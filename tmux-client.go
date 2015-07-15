@@ -5,6 +5,8 @@
 package tmux
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path"
@@ -52,7 +54,43 @@ const (
 type MsgType uint32
 
 type MsgCommandData struct {
-	ArgC int32 // followed by packed argv
+	Args []string
+	// serialied as int32 followed by packed null terminlated
+	// strings.
+}
+
+func (m *MsgCommandData) WireLen() int {
+	size := 0
+	for _, arg := range m.Args {
+		size += len(arg) + 1
+	}
+	return size + 4
+}
+
+func (m *MsgCommandData) WireBytes(buf []byte) error {
+	var err error
+	var bb bytes.Buffer
+
+	if err = binary.Write(&bb, binary.LittleEndian, int32(len(m.Args))); err != nil {
+		return fmt.Errorf("i(%d) write: %s", int32(len(m.Args)), err)
+	}
+	for _, s := range m.Args {
+		bb.WriteString(s)
+		bb.WriteByte(0)
+	}
+	bbuf := bb.Bytes()
+	if len(buf) < len(bbuf) {
+		return fmt.Errorf("Int32 1 bad len %d/%d/4", len(buf), len(bbuf))
+	}
+	copy(buf, bbuf)
+
+	return nil
+}
+
+func (m *MsgCommandData) InitFromWireBytes(buf []byte) error {
+	// TODO: implement
+
+	return nil
 }
 
 type MsgStdinData struct {
@@ -98,14 +136,18 @@ func NewClient(path string) (*Client, error) {
 }
 
 func (c *Client) sendIdentify(flags int) error {
+	fmt.Printf("sendIdnet\n")
+	//c.WriteServer(MsgIdentifyFlags, &Int32{int32(flags)})
+	//c.WriteServer(MsgIdentifyClientPid, &Int32{int32(os.Getpid())})
+	c.WriteServer(MsgIdentifyDone, &Nil{})
 
 	return nil
 }
 
-func (c *Client) WriteOne(msg MsgType, data []byte) error {
-	return nil
+func (c *Client) WriteServer(kind MsgType, data WireSerializer) error {
+	return c.Ibuf.Compose(uint32(kind), ProtocolVersion, 0xffffffff, data)
 }
 
-func (c *Client) WriteServer(msg MsgType, data WireSerializer) error {
-	return nil
+func (c *Client) Flush() {
+	c.Ibuf.Flush()
 }

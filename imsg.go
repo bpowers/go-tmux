@@ -53,26 +53,29 @@ func (ihdr *ImsgHeader) WireLen() int {
 
 func (ihdr *ImsgHeader) WireBytes(buf []byte) error {
 	var err error
-	if len(buf) < 16 {
-		return fmt.Errorf("ImsgHeader 1 bad len %d/16", len(buf))
-	}
-	bb := bytes.NewBuffer(buf)
+	var bb bytes.Buffer
 
-	if err = binary.Write(bb, binary.LittleEndian, ihdr.Type); err != nil {
+	if err = binary.Write(&bb, binary.LittleEndian, ihdr.Type); err != nil {
 		return fmt.Errorf("Write(Type): %s", err)
 	}
-	if err = binary.Write(bb, binary.LittleEndian, ihdr.Len); err != nil {
+	if err = binary.Write(&bb, binary.LittleEndian, ihdr.Len); err != nil {
 		return fmt.Errorf("Write(Len): %s", err)
 	}
-	if err = binary.Write(bb, binary.LittleEndian, ihdr.Flags); err != nil {
+	if err = binary.Write(&bb, binary.LittleEndian, ihdr.Flags); err != nil {
 		return fmt.Errorf("Write(Flags): %s", err)
 	}
-	if err = binary.Write(bb, binary.LittleEndian, ihdr.PeerID); err != nil {
+	if err = binary.Write(&bb, binary.LittleEndian, ihdr.PeerID); err != nil {
 		return fmt.Errorf("Write(PeerID): %s", err)
 	}
-	if err = binary.Write(bb, binary.LittleEndian, ihdr.Pid); err != nil {
+	if err = binary.Write(&bb, binary.LittleEndian, ihdr.Pid); err != nil {
 		return fmt.Errorf("Write(Pid): %s", err)
 	}
+	bbuf := bb.Bytes()
+	if len(buf) < len(bbuf) {
+		return fmt.Errorf("ImsgHeader 1 bad len %d/%d/16", len(buf), len(bbuf))
+	}
+	copy(buf, bbuf)
+	//log.Printf("hdr(%#v) bytes : %#v", ihdr, bbuf)
 	return nil
 }
 
@@ -114,6 +117,7 @@ func NewImsgBuffer(path string) (*ImsgBuffer, error) {
 		conn:     conn,
 		pid:      int32(os.Getpid()),
 		rScratch: make([]byte, IbufReadLen),
+		msgs:     make(chan *Imsg),
 	}
 	ibuf.rBuf = bufio.NewReader(&ibuf.rInbetween)
 	go ibuf.reader()
@@ -180,7 +184,8 @@ func (ibuf *ImsgBuffer) reader() {
 	hBytes := make([]byte, imsgHeaderLen)
 
 	for {
-		n, _, _, _, err := ibuf.conn.ReadMsgUnix(ibuf.rScratch, nil)
+		n, err := ibuf.conn.Read(ibuf.rScratch)
+		//n, _, _, _, err := ibuf.conn.ReadMsgUnix(ibuf.rScratch, nil)
 		if err != nil {
 			log.Printf("ReadMsgUnix: %s", err)
 			return
@@ -190,7 +195,9 @@ func (ibuf *ImsgBuffer) reader() {
 		ibuf.rInbetween.Write(buf)
 
 		for {
+			log.Printf("read")
 			n, err = ibuf.rBuf.Read(hBytes)
+			log.Printf("read done %d", n)
 			if err != nil {
 				log.Printf("rBuf.Read: %s", err)
 				return
@@ -224,4 +231,82 @@ func (ibuf *ImsgBuffer) reader() {
 			ibuf.msgs <- imsg
 		}
 	}
+}
+
+type String struct {
+	S string
+}
+
+func (s *String) WireLen() int {
+	return len(s.S)
+}
+
+func (s *String) WireBytes(buf []byte) error {
+	sBytes := []byte(s.S)
+	if len(buf) < len(sBytes)+1 {
+		return fmt.Errorf("String bad len %d/%d", len(buf), len(sBytes)+1)
+	}
+
+	copy(buf, sBytes)
+	// make sure its null terminated
+	buf[len(sBytes)] = 0
+
+	return nil
+}
+
+func (s *String) InitFromWireBytes(buf []byte) error {
+	if len(buf) > 0 && buf[len(buf)-1] == 0 {
+		buf = buf[:len(buf)-1]
+	}
+	s.S = string(buf)
+
+	return nil
+}
+
+type Int32 struct {
+	int32
+}
+
+func (i *Int32) WireLen() int {
+	return 4
+}
+
+func (i *Int32) WireBytes(buf []byte) error {
+	var err error
+	if len(buf) < 4 {
+		return fmt.Errorf("Int32 1 bad len %d/4", len(buf))
+	}
+	var bb bytes.Buffer
+
+	if err = binary.Write(&bb, binary.LittleEndian, int32(i.int32)); err != nil {
+		return fmt.Errorf("i(%d) write: %s", int32(i.int32), err)
+	}
+
+	bbuf := bb.Bytes()
+	copy(buf, bbuf)
+
+	return nil
+}
+
+func (i *Int32) InitFromWireBytes(buf []byte) error {
+	if len(buf) != 4 {
+		return fmt.Errorf("Int32 bad len %d/16", len(buf))
+	}
+	i.int32 = int32(binary.LittleEndian.Uint32(buf))
+
+	return nil
+}
+
+type Nil struct{}
+
+func (n Nil) WireLen() int {
+	return 0
+}
+
+func (n Nil) WireBytes(buf []byte) error {
+	return nil
+}
+
+func (n Nil) InitFromWireBytes(buf []byte) error {
+	return nil
 }
