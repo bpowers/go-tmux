@@ -11,6 +11,8 @@ import (
 	"os/exec"
 )
 
+var NotFound = fmt.Errorf("object not found")
+
 type Session struct {
 	Name     string
 	NWindows int
@@ -26,6 +28,7 @@ type Window struct {
 	NPanes      int
 	Width       int
 	Height      int
+	Active      bool
 }
 
 func execTmux(args ...string) ([]byte, error) {
@@ -58,23 +61,24 @@ func ListSessions() ([]Session, error) {
 	return sessions, nil
 }
 
-func GetSession(name string) (Session, bool) {
+func GetSession(name string) (Session, error) {
 	sessions, err := ListSessions()
 	if err != nil {
-		return Session{}, false
+		return Session{}, err
 	}
 	for _, s := range sessions {
 		if s.Name == name {
-			return s, true
+			return s, nil
 		}
 	}
-	return Session{}, false
+	return Session{}, NotFound
 }
 
 func ListWindows() ([]Window, error) {
 	out, err := Command("list-windows", "-a", "-F",
 		`{"Index":#{window_index},"Name":"#{window_name}",`+
 			`"SessionName":"#{session_name}",`+
+			`"Active":#{?window_active,true,false},`+
 			`"NPanes":#{window_panes},"Width":#{window_width},`+
 			`"Height":#{window_height}}`)
 	if err != nil {
@@ -91,36 +95,38 @@ func ListWindows() ([]Window, error) {
 	return windows, nil
 }
 
-func GetWindow(name string) (Window, bool) {
+func GetWindow(name string) (Window, error) {
 	windows, err := ListWindows()
 	if err != nil {
-		return Window{}, false
+		return Window{}, err
 	}
 	for _, s := range windows {
 		if s.Name == name {
-			return s, true
+			return s, nil
 		}
 	}
-	return Window{}, false
+	return Window{}, NotFound
 }
 
-func NewSession(sessionName, windowName string, args []string) error {
-	return nil
+func NewSession(sessionName, windowName string, args ...string) (Session, error) {
+	cmdArgs := make([]string, 0, 12)
+	cmdArgs = append(cmdArgs, "new-session", "-d", "-s", sessionName)
+	if windowName != "" {
+		cmdArgs = append(cmdArgs, "-n", windowName)
+	}
+	cmdArgs = append(cmdArgs, args...)
+	out, err := Command(cmdArgs...)
+	if err != nil {
+		return Session{}, fmt.Errorf("Command(new-session): %s", err)
+	}
+	fmt.Printf("out: `%s`\n", out)
+	return GetSession(sessionName)
 }
 
-func NewWindow(target, windowName string, args []string) error {
-	return nil
+func NewWindow(target, windowName string, args ...string) (Window, error) {
+	return Window{}, nil
 }
 
 func ResizePane(target string) error {
 	return nil
-}
-
-func Connect() {
-
-	// open socket
-	// queue send identify
-	// queue send command/msg_shell
-	// flush imsg buffer
-	// wait for response
 }

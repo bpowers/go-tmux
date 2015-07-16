@@ -223,7 +223,6 @@ func (ibuf *ImsgBuffer) readSocket(out chan<- rawBuf) {
 			// exit.
 			return
 		}
-		log.Printf("read %d", n)
 
 		// copy into a new buffer, so we can safely pass it to
 		// another goroutine
@@ -311,7 +310,6 @@ func (ibuf *ImsgBuffer) reader(in <-chan rawBuf) {
 
 			// TODO: this FD handling isn't quite right
 			imsg := &Imsg{header, payload, fd}
-			log.Printf("imsg: %s", MsgType(imsg.Header.Type))
 			ibuf.msgs <- imsg
 		}
 	}
