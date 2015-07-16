@@ -20,11 +20,12 @@ type Session struct {
 }
 
 type Window struct {
-	Index  int
-	Name   string
-	NPanes int
-	Width  int
-	Height int
+	Index       int
+	Name        string
+	SessionName string
+	NPanes      int
+	Width       int
+	Height      int
 }
 
 func execTmux(args ...string) ([]byte, error) {
@@ -73,6 +74,7 @@ func GetSession(name string) (Session, bool) {
 func ListWindows() ([]Window, error) {
 	out, err := Command("list-windows", "-a", "-F",
 		`{"Index":#{window_index},"Name":"#{window_name}",`+
+			`"SessionName":"#{session_name}",`+
 			`"NPanes":#{window_panes},"Width":#{window_width},`+
 			`"Height":#{window_height}}`)
 	if err != nil {
