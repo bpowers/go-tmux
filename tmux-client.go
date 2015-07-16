@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 )
 
@@ -189,7 +190,11 @@ func NewClient(path string) (*Client, error) {
 	c := &Client{Path: path}
 	c.Ibuf, err = NewImsgBuffer(path)
 	if err != nil {
-		return nil, fmt.Errorf("newImsgBuffer: %s", err)
+		if err == ErrNoSocket {
+			return nil, ErrNoSocket
+		} else {
+			return nil, fmt.Errorf("newImsgBuffer: %s", err)
+		}
 	}
 
 	if err := c.sendIdentify(ClientControl); err != nil {
@@ -237,11 +242,24 @@ func (c *Client) Get() (*Imsg, error) {
 	return msg, err
 }
 
+func execCommand(args ...string) ([]byte, error) {
+	cmd := exec.Command("tmux", args...)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := cmd.Run()
+	if err != nil {
+		return nil, fmt.Errorf("Run: %s", err)
+	}
+	return out.Bytes(), nil
+}
+
 func Command(args ...string) ([]byte, error) {
 	path := SocketPath("")
 
 	client, err := NewClient(path)
-	if err != nil {
+	if err != nil && err == ErrNoSocket {
+		return execCommand(args...)
+	} else if err != nil {
 		return nil, fmt.Errorf("NewClient: %s", err)
 	}
 	client.WriteServer(MsgCommand, &MsgCommandData{args}, nil)
@@ -252,7 +270,7 @@ func Command(args ...string) ([]byte, error) {
 	for {
 		imsg, err := client.Get()
 		if err != nil {
-			if err != ImsgBufferClosed {
+			if err != ErrImsgBufferClosed {
 				return nil, fmt.Errorf("client.Get: %s", err)
 			}
 			break

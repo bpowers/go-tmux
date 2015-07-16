@@ -27,7 +27,8 @@ const (
 var (
 	imsgHeaderLen = (&ImsgHeader{}).WireLen()
 
-	ImsgBufferClosed = fmt.Errorf("Buffer channel closed")
+	ErrNoSocket         = fmt.Errorf("no socket")
+	ErrImsgBufferClosed = fmt.Errorf("Buffer channel closed")
 )
 
 type WireSerializer interface {
@@ -118,7 +119,7 @@ func NewImsgBuffer(path string) (*ImsgBuffer, error) {
 	}
 	conn, err := net.DialUnix("unix", nil, addr)
 	if err != nil {
-		return nil, fmt.Errorf("DialUnix(%s): %s", path, err)
+		return nil, ErrNoSocket
 	}
 	ibuf := &ImsgBuffer{
 		conn: conn,
@@ -185,7 +186,7 @@ func (ibuf *ImsgBuffer) Flush() {
 func (ibuf *ImsgBuffer) Get() (*Imsg, error) {
 	result := <-ibuf.msgs
 	if result == nil {
-		return nil, ImsgBufferClosed
+		return nil, ErrImsgBufferClosed
 	}
 
 	return result, nil

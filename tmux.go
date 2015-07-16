@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 )
 
 var NotFound = fmt.Errorf("object not found")
@@ -31,19 +30,10 @@ type Window struct {
 	Active      bool
 }
 
-func execTmux(args ...string) ([]byte, error) {
-	cmd := exec.Command("tmux", args...)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	err := cmd.Run()
-	if err != nil {
-		return nil, fmt.Errorf("Run: %s", err)
-	}
-	return out.Bytes(), nil
-}
-
+// StartServer requires you have sessions specified in your tmux
+// config, otherwise it is effectively a noop.
 func StartServer() error {
-	_, err := execTmux("start-server")
+	_, err := execCommand("start-server")
 	return err
 }
 
@@ -124,7 +114,6 @@ func NewSession(sessionName, windowName string, args ...string) (Session, error)
 	if err != nil {
 		return Session{}, fmt.Errorf("Command(new-session): %s", err)
 	}
-	fmt.Printf("out: `%s`\n", out)
 	return GetSession(sessionName)
 }
 
