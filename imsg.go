@@ -265,50 +265,34 @@ func (ibuf *ImsgBuffer) readSocket(out chan<- rawBuf) {
 func (ibuf *ImsgBuffer) reader(in <-chan rawBuf) {
 	var inbetween bytes.Buffer
 	hBytes := make([]byte, imsgHeaderLen)
-	readHeader := true
-
-	var header ImsgHeader
 
 	for {
 		rawBuf := <-in
 		inbetween.Write(rawBuf.data)
 
-		for {
-			// if we're just waiting for more payload
-			// data, we don't want to re-read the header.
-			if readHeader {
-				zero(hBytes)
+		for inbetween.Len() > 0 {
+			zero(hBytes)
 
-				// didn't read a full header?  wait for more data
-				if inbetween.Len() < imsgHeaderLen {
-					break
-				}
-				n, err := inbetween.Read(hBytes)
-				if err != nil {
-					log.Printf("inbetween.Read: %s", err)
-					return
-				} else if n != imsgHeaderLen {
-					// short read - should never happen
-					log.Printf("inbetween.Read short: %d/%d",
-						n, imsgHeaderLen)
-					return
-				}
-				if err = header.InitFromWireBytes(hBytes); err != nil {
-					log.Printf("InitFromWireBytes: %s", err)
-					return
-				}
-				readHeader = false
+			n, err := inbetween.Read(hBytes)
+			if err != nil {
+				log.Printf("inbetween.Read: %s", err)
+				return
+			} else if n != imsgHeaderLen {
+				// short read - should never happen
+				log.Printf("inbetween.Read short: %d/%d",
+					n, imsgHeaderLen)
+				return
+			}
+
+			var header ImsgHeader
+			if err = header.InitFromWireBytes(hBytes); err != nil {
+				log.Printf("InitFromWireBytes: %s", err)
+				return
 			}
 
 			var payload []byte
 			payloadLen := int(header.Len) - imsgHeaderLen
 			if payloadLen > 0 {
-				// wait for more data
-				if inbetween.Len() < payloadLen {
-					fmt.Printf("need more for payload %d/%d\n",
-						inbetween.Len(), payloadLen)
-					break
-				}
 				payload = make([]byte, payloadLen)
 				n, err := inbetween.Read(payload)
 				if err != nil {
@@ -319,15 +303,16 @@ func (ibuf *ImsgBuffer) reader(in <-chan rawBuf) {
 					return
 				}
 			}
+
 			var fd *os.File
 			if len(rawBuf.fds) > 0 {
 				fd = rawBuf.fds[0]
 			}
+
 			// TODO: this FD handling isn't quite right
 			imsg := &Imsg{header, payload, fd}
 			log.Printf("imsg: %s", MsgType(imsg.Header.Type))
 			ibuf.msgs <- imsg
-			readHeader = true
 		}
 	}
 }
