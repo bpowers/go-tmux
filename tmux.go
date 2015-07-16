@@ -42,6 +42,11 @@ func execTmux(args ...string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+func StartServer() error {
+	_, err := execTmux("start-server")
+	return err
+}
+
 func ListSessions() ([]Session, error) {
 	out, err := Command("list-sessions", "-F",
 		`{"Name":"#{session_name}","NWindow":#{session_windows},`+
@@ -109,7 +114,7 @@ func GetWindow(name string) (Window, error) {
 }
 
 func NewSession(sessionName, windowName string, args ...string) (Session, error) {
-	cmdArgs := make([]string, 0, 12)
+	cmdArgs := make([]string, 0, 16)
 	cmdArgs = append(cmdArgs, "new-session", "-d", "-s", sessionName)
 	if windowName != "" {
 		cmdArgs = append(cmdArgs, "-n", windowName)
@@ -124,9 +129,37 @@ func NewSession(sessionName, windowName string, args ...string) (Session, error)
 }
 
 func NewWindow(target, windowName string, args ...string) (Window, error) {
-	return Window{}, nil
+	cmdArgs := make([]string, 0, 16)
+	cmdArgs = append(cmdArgs, "new-window", "-a", "-t", target)
+	if windowName != "" {
+		cmdArgs = append(cmdArgs, "-n", windowName)
+	}
+	cmdArgs = append(cmdArgs, args...)
+	out, err := Command(cmdArgs...)
+	if err != nil {
+		return Window{}, fmt.Errorf("Command(new-window): %s", err)
+	}
+	fmt.Printf("out2: `%s`\n", out)
+	return GetWindow(windowName)
 }
 
-func ResizePane(target string) error {
-	return nil
+func SplitWindow(target string, args ...string) error {
+	cmdArgs := make([]string, 0, 3+len(args))
+	cmdArgs = append(cmdArgs, "split-window", "-t", target)
+	cmdArgs = append(cmdArgs, args...)
+	_, err := Command(cmdArgs...)
+	return err
+}
+
+func ResizePane(target string, args ...string) error {
+	cmdArgs := make([]string, 0, 3+len(args))
+	cmdArgs = append(cmdArgs, "resize-pane", "-t", target)
+	cmdArgs = append(cmdArgs, args...)
+	_, err := Command(cmdArgs...)
+	return err
+}
+
+func SelectPane(target string) error {
+	_, err := Command("select-pane", "-t", target)
+	return err
 }
