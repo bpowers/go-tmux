@@ -169,7 +169,7 @@ func (m *MsgStdioData) String() string {
 	if end < 0 {
 		end = len(m.Data)
 	}
-	return string(m.Data[:end])
+	return string(bytes.TrimSpace(m.Data[:end]))
 }
 
 func SocketPath(prefix string) string {
@@ -200,17 +200,91 @@ func NewClient(path string) (*Client, error) {
 }
 
 func (c *Client) sendIdentify(flags ClientFlag) error {
-	c.WriteServer(MsgIdentifyFlags, &Int32{int32(flags)})
-	c.WriteServer(MsgIdentifyClientPid, &Int32{int32(os.Getpid())})
-	c.WriteServer(MsgIdentifyDone, &Nil{})
+	c.WriteServer(MsgIdentifyFlags, &Int32{int32(flags)}, nil)
+	c.WriteServer(MsgIdentifyClientPid, &Int32{int32(os.Getpid())}, nil)
+	cwd, err := os.Open(".")
+	if err != nil {
+		return fmt.Errorf("Open(.): %s", err)
+	}
+	c.WriteServer(MsgIdentifyCWD, &Nil{}, cwd)
+	devnull, err := os.Open("/dev/null")
+	if err != nil {
+		return fmt.Errorf("Open(/dev/null): %s", err)
+	}
+	c.WriteServer(MsgIdentifyStdin, &Nil{}, devnull)
+	c.WriteServer(MsgIdentifyDone, &Nil{}, nil)
 
 	return nil
 }
 
-func (c *Client) WriteServer(kind MsgType, data WireSerializer) error {
-	return c.Ibuf.Compose(uint32(kind), ProtocolVersion, 0xffffffff, data)
+func (c *Client) WriteServer(kind MsgType, data WireSerializer, f *os.File) error {
+	return c.Ibuf.Compose(uint32(kind), ProtocolVersion, 0xffffffff, data, f)
 }
 
 func (c *Client) Flush() {
 	c.Ibuf.Flush()
+}
+
+func (c *Client) Get() (*Imsg, error) {
+	msg, err := c.Ibuf.Get()
+	if err != nil {
+		return nil, fmt.Errorf("c.Ibuf.Get(): %s", err)
+	}
+	kind := MsgType(msg.Header.Type)
+	if kind == MsgExit || kind == MsgShutdown || kind == MsgExited {
+		c.Ibuf.Close()
+	}
+	return msg, err
+}
+
+func Command(args ...string) ([]byte, error) {
+	path := SocketPath("")
+
+	client, err := NewClient(path)
+	if err != nil {
+		return nil, fmt.Errorf("NewClient: %s", err)
+	}
+	client.WriteServer(MsgCommand, &MsgCommandData{args}, nil)
+	client.Flush()
+
+	outs := make([][]byte, 0, 1)
+
+	for {
+		imsg, err := client.Get()
+		if err != nil {
+			if err != ImsgBufferClosed {
+				return nil, fmt.Errorf("client.Get: %s", err)
+			}
+			break
+		}
+		kind := MsgType(imsg.Header.Type)
+		if kind == MsgStdin || kind == MsgStdout {
+			var payload MsgStdioData
+			err := payload.InitFromWireBytes(imsg.Data)
+			if err != nil {
+				return nil, fmt.Errorf("payload.InitFromWireBytes: %s", err)
+			}
+			// for now, ignore the prefix + suffix emitted
+			// by command mode.
+			if bytes.HasPrefix(payload.Data, []byte("%begin ")) ||
+				bytes.HasPrefix(payload.Data, []byte("%end ")) {
+				continue
+			}
+			outs = append(outs, payload.Data)
+		} else if kind == MsgExit || kind == MsgShutdown || kind == MsgExited {
+			break
+		} else {
+			return nil, fmt.Errorf("unknown imsg(%s)\n", kind)
+		}
+	}
+
+	size := 0
+	for _, buf := range outs {
+		size += len(buf)
+	}
+	result := make([]byte, 0, size)
+	for _, buf := range outs {
+		result = append(result, buf...)
+	}
+	return bytes.TrimSpace(result), nil
 }

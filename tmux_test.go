@@ -10,6 +10,23 @@ import (
 )
 
 func TestListSessions(t *testing.T) {
+	sessions, err := ListSessions()
+	if err != nil {
+		t.Errorf("ListSessions: %s", err)
+	}
+	for _, session := range sessions {
+		fmt.Printf("session: %#v\n", session)
+	}
+}
+
+func TestListWindows(t *testing.T) {
+	windows, err := ListWindows()
+	if err != nil {
+		t.Errorf("ListWindows: %s", err)
+	}
+	for _, window := range windows {
+		fmt.Printf("window: %#v\n", window)
+	}
 	//sessions := ListSessions()
 	//if len(sessions) != 0 {
 	//	t.Errorf("non-zero session length")
@@ -18,35 +35,10 @@ func TestListSessions(t *testing.T) {
 }
 
 func TestClient(t *testing.T) {
-	path := SocketPath("")
-
-	client, err := NewClient(path)
+	msg, err := Command("list-windows")
 	if err != nil {
-		t.Errorf("NewClient: %s", err)
+		t.Errorf("Command: %s", err)
 		return
 	}
-	client.WriteServer(MsgCommand, &MsgCommandData{[]string{"list-windows"}})
-	client.Flush()
-
-	for {
-		imsg, err := client.Ibuf.Get()
-		if err != nil {
-			if err != ImsgBufferClosed {
-				t.Errorf("client: %s", err)
-			}
-			break
-		}
-		kind := MsgType(imsg.Header.Type)
-		if kind == MsgStdin || kind == MsgStdout {
-			var payload MsgStdioData
-			err := payload.InitFromWireBytes(imsg.Data)
-			if err != nil {
-				t.Errorf("payload.InitFromWireBytes: %s", err)
-				return
-			}
-			fmt.Printf("imsg(%s): %s\n", kind, payload.String())
-		} else {
-			fmt.Printf("imsg(%s)\n", kind)
-		}
-	}
+	fmt.Printf("RESULT: `%s`\n", string(msg))
 }

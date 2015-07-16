@@ -6,15 +6,15 @@ package tmux
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os/exec"
-	"time"
 )
 
 type Session struct {
 	Name     string
 	NWindows int
-	Created  time.Time
+	Created  string
 	Width    int
 	Height   int
 }
@@ -38,27 +38,68 @@ func execTmux(args ...string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-func ListSessions() []Session {
-	out, err := execTmux("list-sessions", "-F", "")
-	fmt.Printf("OUT: %s\n", out)
+func ListSessions() ([]Session, error) {
+	out, err := Command("list-sessions", "-F",
+		`{"Name":"#{session_name}","NWindow":#{session_windows},`+
+			`"Created":"#{session_created_string}",`+
+			`"Width":#{session_width},"Height":#{session_height}}`)
 	if err != nil {
-		return []Session{}
+		return nil, fmt.Errorf("Command: %s", err)
 	}
-	return nil
-}
-
-func ListWindows() []Window {
-	return nil
+	bufs := bytes.Split(out, []byte{'\n'})
+	sessions := make([]Session, len(bufs))
+	for i, buf := range bufs {
+		err := json.Unmarshal(buf, &sessions[i])
+		if err != nil {
+			return nil, fmt.Errorf("Unmarshal(%s): %s", string(buf), err)
+		}
+	}
+	return sessions, nil
 }
 
 func GetSession(name string) (Session, bool) {
-	sessions := ListSessions()
+	sessions, err := ListSessions()
+	if err != nil {
+		return Session{}, false
+	}
 	for _, s := range sessions {
 		if s.Name == name {
 			return s, true
 		}
 	}
 	return Session{}, false
+}
+
+func ListWindows() ([]Window, error) {
+	out, err := Command("list-windows", "-F",
+		`{"Index":#{window_index},"Name":"#{window_name}",`+
+			`"NPanes":#{window_panes},"Width":#{window_width},`+
+			`"Height":#{window_height}}`)
+	if err != nil {
+		return nil, fmt.Errorf("Command: %s", err)
+	}
+	windowBufs := bytes.Split(out, []byte{'\n'})
+	windows := make([]Window, len(windowBufs))
+	for i, buf := range windowBufs {
+		err := json.Unmarshal(buf, &windows[i])
+		if err != nil {
+			return nil, fmt.Errorf("Unmarshal: %s", err)
+		}
+	}
+	return windows, nil
+}
+
+func GetWindow(name string) (Window, bool) {
+	windows, err := ListWindows()
+	if err != nil {
+		return Window{}, false
+	}
+	for _, s := range windows {
+		if s.Name == name {
+			return s, true
+		}
+	}
+	return Window{}, false
 }
 
 func NewSession(sessionName, windowName string, args []string) error {

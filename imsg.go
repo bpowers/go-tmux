@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"syscall"
 )
 
 const (
@@ -21,6 +22,7 @@ const (
 
 	IbufReadLen = 65535
 	MaxImsgLen  = 16384
+	cmsgBufLen  = 4096
 )
 
 var (
@@ -38,6 +40,7 @@ type WireSerializer interface {
 type Imsg struct {
 	Header ImsgHeader
 	Data   []byte
+	FD     *os.File
 }
 
 // ImsgHeader describes the current message.
@@ -95,13 +98,10 @@ func (ihdr *ImsgHeader) InitFromWireBytes(buf []byte) error {
 }
 
 type ImsgBuffer struct {
-	conn       *net.UnixConn
-	mu         sync.Mutex
-	wQueue     [][]byte
-	rScratch   []byte
-	rInbetween bytes.Buffer
-	rBuf       *bufio.Reader
-	msgs       chan *Imsg
+	conn   *net.UnixConn
+	mu     sync.Mutex
+	wQueue []Imsg
+	msgs   chan *Imsg
 	// Linux kernel defines pid_t as a 32-bit signed int in
 	// include/uapi/asm-generic/posix_types.h
 	pid int32
@@ -117,18 +117,16 @@ func NewImsgBuffer(path string) (*ImsgBuffer, error) {
 		return nil, fmt.Errorf("DialUnix(%s): %s", path, err)
 	}
 	ibuf := &ImsgBuffer{
-		conn:     conn,
-		pid:      int32(os.Getpid()),
-		rScratch: make([]byte, IbufReadLen),
-		msgs:     make(chan *Imsg),
+		conn: conn,
+		pid:  int32(os.Getpid()),
+		msgs: make(chan *Imsg),
 	}
-	ibuf.rBuf = bufio.NewReader(&ibuf.rInbetween)
 	go ibuf.reader()
 
 	return ibuf, nil
 }
 
-func (ibuf *ImsgBuffer) Compose(kind, peerID, pid uint32, data WireSerializer) error {
+func (ibuf *ImsgBuffer) Compose(kind, peerID, pid uint32, data WireSerializer, fd *os.File) error {
 	var err error
 	size := imsgHeaderLen + data.WireLen()
 	header := ImsgHeader{
@@ -142,8 +140,6 @@ func (ibuf *ImsgBuffer) Compose(kind, peerID, pid uint32, data WireSerializer) e
 	}
 	buf := make([]byte, size)
 
-	// TODO: rights/send FD
-
 	if err = header.WireBytes(buf[0:imsgHeaderLen]); err != nil {
 		return fmt.Errorf("header.WireBytes: %s", err)
 	}
@@ -152,7 +148,7 @@ func (ibuf *ImsgBuffer) Compose(kind, peerID, pid uint32, data WireSerializer) e
 	}
 
 	ibuf.mu.Lock()
-	ibuf.wQueue = append(ibuf.wQueue, buf)
+	ibuf.wQueue = append(ibuf.wQueue, Imsg{Data: buf, FD: fd})
 	ibuf.mu.Unlock()
 
 	return nil
@@ -164,11 +160,16 @@ func (ibuf *ImsgBuffer) Flush() {
 	defer ibuf.mu.Unlock()
 
 	for _, buf := range ibuf.wQueue {
-		n, _, err := ibuf.conn.WriteMsgUnix(buf, nil, nil)
+		var cmsgBuf []byte
+		if buf.FD != nil {
+			cmsgBuf = syscall.UnixRights(int(buf.FD.Fd()))
+			defer buf.FD.Close()
+		}
+		n, _, err := ibuf.conn.WriteMsgUnix(buf.Data, cmsgBuf, nil)
 		if err != nil {
 			log.Printf("ibuf.conn.Write: %s", err)
-		} else if n != len(buf) {
-			log.Printf("ibuf.conn.Write short: %d/%d", n, len(buf))
+		} else if n != len(buf.Data) {
+			log.Printf("ibuf.conn.Write short: %d/%d", n, len(buf.Data))
 		}
 	}
 	ibuf.wQueue = nil
@@ -183,25 +184,61 @@ func (ibuf *ImsgBuffer) Get() (*Imsg, error) {
 	return result, nil
 }
 
+func (ibuf *ImsgBuffer) Close() {
+	ibuf.conn.Close()
+}
+
 func (ibuf *ImsgBuffer) reader() {
 	hBytes := make([]byte, imsgHeaderLen)
+	cmsgBuf := make([]byte, cmsgBufLen)
+	imsgBuf := make([]byte, IbufReadLen)
+	var inbetween bytes.Buffer
+	rBuf := bufio.NewReader(&inbetween)
 
 	for {
-		n, err := ibuf.conn.Read(ibuf.rScratch)
-		//n, _, _, _, err := ibuf.conn.ReadMsgUnix(ibuf.rScratch, nil)
+		n, cn, _, _, err := ibuf.conn.ReadMsgUnix(imsgBuf, cmsgBuf)
 		if err != nil {
-			log.Printf("ReadMsgUnix: %s", err)
-			return
-		}
-
-		buf := ibuf.rScratch[:n]
-		ibuf.rInbetween.Write(buf)
-
-		for {
-			n, err = ibuf.rBuf.Read(hBytes)
 			if err == io.EOF {
 				close(ibuf.msgs)
+			}
+			// if we have a read error, its probably
+			// because our connection closed, just quietly
+			// exit.
+			return
+		}
+		log.Printf("read %d", n)
+
+		buf := imsgBuf[:n]
+		inbetween.Write(buf)
+
+		files := make([]*os.File, 0)
+
+		if cn > 0 {
+			cmsgs, err := syscall.ParseSocketControlMessage(cmsgBuf)
+			if err != nil {
+				log.Printf("ParseSocketControlMessage: %s", err)
 				return
+			}
+			log.Printf("n cmsgs: %d", len(cmsgs))
+			for _, cmsg := range cmsgs {
+				fds, err := syscall.ParseUnixRights(&cmsg)
+				if err != nil {
+					log.Printf("ParseUnixRights: %s", err)
+				}
+				for _, fd := range fds {
+					files = append(files, os.NewFile(uintptr(fd), "<from tmux>"))
+				}
+			}
+		}
+
+		if len(files) > 0 {
+			log.Printf("FDs: %#v", files)
+		}
+
+		for {
+			n, err = rBuf.Read(hBytes)
+			if err == io.EOF {
+				break
 			} else if err != nil {
 				log.Printf("rBuf.Read: %s", err)
 				return
@@ -216,13 +253,11 @@ func (ibuf *ImsgBuffer) reader() {
 				return
 			}
 
-			// TODO: rights/receive FD
-
 			var payload []byte
 			payloadLen := int(header.Len) - imsgHeaderLen
 			if payloadLen > 0 {
 				payload = make([]byte, payloadLen)
-				n, err := ibuf.rBuf.Read(payload)
+				n, err := rBuf.Read(payload)
 				if err != nil {
 					log.Printf("rBuf.Read 2: %s", err)
 					return
@@ -231,7 +266,9 @@ func (ibuf *ImsgBuffer) reader() {
 					return
 				}
 			}
-			imsg := &Imsg{header, payload}
+			// TODO: associate FDs
+			imsg := &Imsg{header, payload, nil}
+			log.Printf("imsg: %s", MsgType(imsg.Header.Type))
 			ibuf.msgs <- imsg
 		}
 	}
