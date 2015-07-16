@@ -110,7 +110,7 @@ func NewSession(sessionName, windowName string, args ...string) (Session, error)
 		cmdArgs = append(cmdArgs, "-n", windowName)
 	}
 	cmdArgs = append(cmdArgs, args...)
-	out, err := Command(cmdArgs...)
+	_, err := Command(cmdArgs...)
 	if err != nil {
 		return Session{}, fmt.Errorf("Command(new-session): %s", err)
 	}
@@ -124,11 +124,10 @@ func NewWindow(target, windowName string, args ...string) (Window, error) {
 		cmdArgs = append(cmdArgs, "-n", windowName)
 	}
 	cmdArgs = append(cmdArgs, args...)
-	out, err := Command(cmdArgs...)
+	_, err := Command(cmdArgs...)
 	if err != nil {
 		return Window{}, fmt.Errorf("Command(new-window): %s", err)
 	}
-	fmt.Printf("out2: `%s`\n", out)
 	return GetWindow(windowName)
 }
 
