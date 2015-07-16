@@ -71,7 +71,7 @@ func GetSession(name string) (Session, bool) {
 }
 
 func ListWindows() ([]Window, error) {
-	out, err := Command("list-windows", "-F",
+	out, err := Command("list-windows", "-a", "-F",
 		`{"Index":#{window_index},"Name":"#{window_name}",`+
 			`"NPanes":#{window_panes},"Width":#{window_width},`+
 			`"Height":#{window_height}}`)

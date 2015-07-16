@@ -5,7 +5,6 @@
 package tmux
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/binary"
 	"fmt"
@@ -35,6 +34,11 @@ type WireSerializer interface {
 	InitFromWireBytes([]byte) error
 	WireBytes([]byte) error
 	WireLen() int
+}
+
+type rawBuf struct {
+	data []byte
+	fds  []*os.File
 }
 
 type Imsg struct {
@@ -121,7 +125,10 @@ func NewImsgBuffer(path string) (*ImsgBuffer, error) {
 		pid:  int32(os.Getpid()),
 		msgs: make(chan *Imsg),
 	}
-	go ibuf.reader()
+
+	between := make(chan rawBuf)
+	go ibuf.readSocket(between)
+	go ibuf.reader(between)
 
 	return ibuf, nil
 }
@@ -188,14 +195,24 @@ func (ibuf *ImsgBuffer) Close() {
 	ibuf.conn.Close()
 }
 
-func (ibuf *ImsgBuffer) reader() {
-	hBytes := make([]byte, imsgHeaderLen)
+func zero(buf []byte) {
+	for i := range buf {
+		buf[i] = 0
+	}
+}
+
+// fd -> chan []byte
+// []byte chan -> imsg chan
+
+func (ibuf *ImsgBuffer) readSocket(out chan<- rawBuf) {
 	cmsgBuf := make([]byte, cmsgBufLen)
 	imsgBuf := make([]byte, IbufReadLen)
-	var inbetween bytes.Buffer
-	rBuf := bufio.NewReader(&inbetween)
 
 	for {
+		// TODO: not necessary
+		zero(cmsgBuf)
+		zero(imsgBuf)
+
 		n, cn, _, _, err := ibuf.conn.ReadMsgUnix(imsgBuf, cmsgBuf)
 		if err != nil {
 			if err == io.EOF {
@@ -208,11 +225,16 @@ func (ibuf *ImsgBuffer) reader() {
 		}
 		log.Printf("read %d", n)
 
-		buf := imsgBuf[:n]
-		inbetween.Write(buf)
+		// copy into a new buffer, so we can safely pass it to
+		// another goroutine
+		buf := make([]byte, n)
+		copy(buf, imsgBuf)
 
-		files := make([]*os.File, 0)
+		var files []*os.File
 
+		// TODO: not sure how this works.  a Read might return
+		// multiple messages coalessed into one.  How does
+		// that correspond to socket control messages?
 		if cn > 0 {
 			cmsgs, err := syscall.ParseSocketControlMessage(cmsgBuf)
 			if err != nil {
@@ -231,45 +253,83 @@ func (ibuf *ImsgBuffer) reader() {
 			}
 		}
 
+		// TODO: remove debugging
 		if len(files) > 0 {
 			log.Printf("FDs: %#v", files)
 		}
 
-		for {
-			n, err = rBuf.Read(hBytes)
-			if err == io.EOF {
-				break
-			} else if err != nil {
-				log.Printf("rBuf.Read: %s", err)
-				return
-			} else if n != imsgHeaderLen {
-				log.Printf("rBuf.Read short: %d/%d", n, imsgHeaderLen)
-				return
-			}
+		out <- rawBuf{buf, files}
+	}
+}
 
-			var header ImsgHeader
-			if err = header.InitFromWireBytes(hBytes); err != nil {
-				log.Printf("InitFromWireBytes: %s", err)
-				return
+func (ibuf *ImsgBuffer) reader(in <-chan rawBuf) {
+	var inbetween bytes.Buffer
+	hBytes := make([]byte, imsgHeaderLen)
+	readHeader := true
+
+	var header ImsgHeader
+
+	for {
+		fmt.Printf("waiting\n")
+		rawBuf := <-in
+		inbetween.Write(rawBuf.data)
+		fmt.Printf("got something\n")
+
+		for {
+			// if we're just waiting for more payload
+			// data, we don't want to re-read the header.
+			if readHeader {
+				zero(hBytes)
+
+				// didn't read a full header?  wait for more data
+				if inbetween.Len() < imsgHeaderLen {
+					break
+				}
+				n, err := inbetween.Read(hBytes)
+				if err != nil {
+					log.Printf("inbetween.Read: %s", err)
+					return
+				} else if n != imsgHeaderLen {
+					// short read - should never happen
+					log.Printf("inbetween.Read short: %d/%d",
+						n, imsgHeaderLen)
+					return
+				}
+				if err = header.InitFromWireBytes(hBytes); err != nil {
+					log.Printf("InitFromWireBytes: %s", err)
+					return
+				}
+				readHeader = false
 			}
 
 			var payload []byte
 			payloadLen := int(header.Len) - imsgHeaderLen
 			if payloadLen > 0 {
+				// wait for more data
+				if inbetween.Len() < payloadLen {
+					fmt.Printf("need more for payload %d/%d\n",
+						inbetween.Len(), payloadLen)
+					break
+				}
 				payload = make([]byte, payloadLen)
-				n, err := rBuf.Read(payload)
+				n, err := inbetween.Read(payload)
 				if err != nil {
-					log.Printf("rBuf.Read 2: %s", err)
+					log.Printf("inbetween.Read 2: %s", err)
 					return
 				} else if n != payloadLen {
-					log.Printf("rBuf.Read 2 short: %d/%d", n, payloadLen)
+					log.Printf("inbetween.Read 2 short: %d/%d", n, payloadLen)
 					return
 				}
 			}
-			// TODO: associate FDs
-			imsg := &Imsg{header, payload, nil}
+			var fd *os.File
+			if len(rawBuf.fds) > 0 {
+				fd = rawBuf.fds[0]
+			}
+			// TODO: this FD handling isn't quite right
+			imsg := &Imsg{header, payload, fd}
 			log.Printf("imsg: %s", MsgType(imsg.Header.Type))
 			ibuf.msgs <- imsg
+			readHeader = true
 		}
 	}
 }
