@@ -270,10 +270,8 @@ func (ibuf *ImsgBuffer) reader(in <-chan rawBuf) {
 	var header ImsgHeader
 
 	for {
-		fmt.Printf("waiting\n")
 		rawBuf := <-in
 		inbetween.Write(rawBuf.data)
-		fmt.Printf("got something\n")
 
 		for {
 			// if we're just waiting for more payload
