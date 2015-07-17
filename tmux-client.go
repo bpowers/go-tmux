@@ -181,14 +181,14 @@ func SocketPath(prefix string) string {
 	return path.Join(prefix, fmt.Sprintf("tmux-%d", os.Getuid()), "default")
 }
 
-type Client struct {
+type client struct {
 	Path string
 	Ibuf *ImsgBuffer
 }
 
-func NewClient(path string) (*Client, error) {
+func newClient(path string) (*client, error) {
 	var err error
-	c := &Client{Path: path}
+	c := &client{Path: path}
 	c.Ibuf, err = NewImsgBuffer(path)
 	if err != nil {
 		if err == ErrNoSocket {
@@ -198,14 +198,14 @@ func NewClient(path string) (*Client, error) {
 		}
 	}
 
-	if err := c.sendIdentify(ClientUTF8|Client256Colours); err != nil {
+	if err := c.sendIdentify(ClientUTF8 | Client256Colours); err != nil {
 		return nil, fmt.Errorf("sendIdentify: %s", err)
 	}
 
 	return c, nil
 }
 
-func (c *Client) sendIdentify(flags ClientFlag) error {
+func (c *client) sendIdentify(flags ClientFlag) error {
 	c.WriteServer(MsgIdentifyFlags, &Int32{int32(flags)}, nil)
 	c.WriteServer(MsgIdentifyClientPid, &Int32{int32(os.Getpid())}, nil)
 	c.WriteServer(MsgIdentifyTerm, &String{os.Getenv("TERM")}, nil)
@@ -224,15 +224,15 @@ func (c *Client) sendIdentify(flags ClientFlag) error {
 	return nil
 }
 
-func (c *Client) WriteServer(kind MsgType, data WireSerializer, f *os.File) error {
+func (c *client) WriteServer(kind MsgType, data WireSerializer, f *os.File) error {
 	return c.Ibuf.Compose(uint32(kind), ProtocolVersion, 0xffffffff, data, f)
 }
 
-func (c *Client) Flush() {
+func (c *client) Flush() {
 	c.Ibuf.Flush()
 }
 
-func (c *Client) Get() (*Imsg, error) {
+func (c *client) Get() (*Imsg, error) {
 	msg, err := c.Ibuf.Get()
 	if err != nil {
 		return nil, fmt.Errorf("c.Ibuf.Get(): %s", err)
@@ -258,11 +258,11 @@ func execCommand(args ...string) ([]byte, error) {
 func Command(args ...string) ([]byte, error) {
 	path := SocketPath("")
 
-	client, err := NewClient(path)
+	client, err := newClient(path)
 	if err != nil && err == ErrNoSocket {
 		return execCommand(args...)
 	} else if err != nil {
-		return nil, fmt.Errorf("NewClient: %s", err)
+		return nil, fmt.Errorf("newClient: %s", err)
 	}
 	client.WriteServer(MsgCommand, &MsgCommandData{args}, nil)
 	client.Flush()

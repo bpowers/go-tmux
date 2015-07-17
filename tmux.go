@@ -30,6 +30,16 @@ type Window struct {
 	Active      bool
 }
 
+type Client struct {
+	TTY         string
+	SessionName string
+	Width       int
+	Height      int
+	TermName    string
+	UTF8        bool
+	ReadOnly    bool
+}
+
 // StartServer requires you have sessions specified in your tmux
 // config, otherwise it is effectively a noop.
 func StartServer() error {
@@ -101,6 +111,47 @@ func GetWindow(name string) (Window, error) {
 		}
 	}
 	return Window{}, NotFound
+}
+
+func ListClients() ([]Client, error) {
+	out, err := Command("list-clients", "-F",
+		`{"TTY":#{client_tty},`+
+			`"SessionName":"#{session_name}",`+
+			`"Width":#{client_width},`+
+			`"Height":#{client_height}}`+
+			`"TermName":"#{client_termname}",`+
+			`"UTF8":#{?client_utf8,true,false},`+
+			`"ReadOnly":#{?client_readonly,true,false},`)
+	if err != nil {
+		return nil, fmt.Errorf("Command: %s", err)
+	}
+	bufs := bytes.Split(out, []byte{'\n'})
+	clients := make([]Client, len(bufs))
+	for i, buf := range bufs {
+		err := json.Unmarshal(buf, &clients[i])
+		if err != nil {
+			return nil, fmt.Errorf("Unmarshal: %s", err)
+		}
+	}
+	return clients, nil
+}
+
+func GetClient(tty string) (Client, error) {
+	clients, err := ListClients()
+	if err != nil {
+		return Client{}, err
+	}
+	for _, c := range clients {
+		if c.TTY == tty {
+			return c, nil
+		}
+	}
+	return Client{}, NotFound
+}
+
+func SwitchClient(tty, target string) error {
+	_, err := Command("switch-client", "-c", tty, "-t", target)
+	return err
 }
 
 func NewSession(sessionName, windowName string, args ...string) (Session, error) {
