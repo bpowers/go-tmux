@@ -119,7 +119,7 @@ func NewSession(sessionName, windowName string, args ...string) (Session, error)
 
 func NewWindow(target, windowName string, args ...string) (Window, error) {
 	cmdArgs := make([]string, 0, 16)
-	cmdArgs = append(cmdArgs, "new-window", "-a", "-t", target)
+	cmdArgs = append(cmdArgs, "new-window", "-t", target)
 	if windowName != "" {
 		cmdArgs = append(cmdArgs, "-n", windowName)
 	}
