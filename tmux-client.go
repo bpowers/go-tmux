@@ -268,7 +268,9 @@ func Command(args ...string) ([]byte, error) {
 	client.Flush()
 
 	outs := make([][]byte, 0, 1)
+	var errs [][]byte
 
+outer:
 	for {
 		imsg, err := client.Get()
 		if err != nil {
@@ -277,8 +279,11 @@ func Command(args ...string) ([]byte, error) {
 			}
 			break
 		}
-		kind := MsgType(imsg.Header.Type)
-		if kind == MsgStdin || kind == MsgStdout {
+
+		switch kind := MsgType(imsg.Header.Type); kind {
+		case MsgStdin:
+			// ignore
+		case MsgStdout:
 			var payload MsgStdioData
 			err := payload.InitFromWireBytes(imsg.Data)
 			if err != nil {
@@ -291,11 +296,26 @@ func Command(args ...string) ([]byte, error) {
 				continue
 			}
 			outs = append(outs, payload.Data)
-		} else if kind == MsgExit || kind == MsgShutdown || kind == MsgExited {
-			break
-		} else {
+		case MsgStderr:
+			var payload MsgStdioData
+			err := payload.InitFromWireBytes(imsg.Data)
+			if err != nil {
+				return nil, fmt.Errorf("payload.InitFromWireBytes: %s", err)
+			}
+			errs = append(errs, payload.Data)
+		case MsgExit, MsgShutdown, MsgExited:
+			break outer
+		default:
 			return nil, fmt.Errorf("unknown imsg(%s)\n", kind)
 		}
+	}
+
+	if len(errs) > 0 {
+		result := make([]byte, 0)
+		for _, buf := range outs {
+			result = append(result, buf...)
+		}
+		return nil, fmt.Errorf("stderr: %s", string(bytes.TrimSpace(result)))
 	}
 
 	size := 0

@@ -115,13 +115,13 @@ func GetWindow(name string) (Window, error) {
 
 func ListClients() ([]Client, error) {
 	out, err := Command("list-clients", "-F",
-		`{"TTY":#{client_tty},`+
+		`{"TTY":"#{client_tty}",`+
 			`"SessionName":"#{session_name}",`+
 			`"Width":#{client_width},`+
-			`"Height":#{client_height}}`+
+			`"Height":#{client_height},`+
 			`"TermName":"#{client_termname}",`+
 			`"UTF8":#{?client_utf8,true,false},`+
-			`"ReadOnly":#{?client_readonly,true,false},`)
+			`"ReadOnly":#{?client_readonly,true,false}}`)
 	if err != nil {
 		return nil, fmt.Errorf("Command: %s", err)
 	}
@@ -130,7 +130,7 @@ func ListClients() ([]Client, error) {
 	for i, buf := range bufs {
 		err := json.Unmarshal(buf, &clients[i])
 		if err != nil {
-			return nil, fmt.Errorf("Unmarshal: %s", err)
+			return nil, fmt.Errorf("Unmarshal(%s): %s", string(buf), err)
 		}
 	}
 	return clients, nil
