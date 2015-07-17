@@ -146,6 +146,9 @@ func (ibuf *ImsgBuffer) Compose(kind, peerID, pid uint32, data WireSerializer, f
 	if header.Pid == 0 {
 		header.Pid = uint32(ibuf.pid)
 	}
+	if fd != nil {
+		header.Flags |= ImsgfHasFD
+	}
 	buf := make([]byte, size)
 
 	if err = header.WireBytes(buf[0:imsgHeaderLen]); err != nil {
