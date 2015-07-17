@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"syscall"
 )
 
 //go:generate stringer -type MsgType,ClientFlag -output enum_strings.go
@@ -197,7 +198,7 @@ func NewClient(path string) (*Client, error) {
 		}
 	}
 
-	if err := c.sendIdentify(ClientControl); err != nil {
+	if err := c.sendIdentify(ClientUTF8|Client256Colours); err != nil {
 		return nil, fmt.Errorf("sendIdentify: %s", err)
 	}
 
@@ -207,16 +208,17 @@ func NewClient(path string) (*Client, error) {
 func (c *Client) sendIdentify(flags ClientFlag) error {
 	c.WriteServer(MsgIdentifyFlags, &Int32{int32(flags)}, nil)
 	c.WriteServer(MsgIdentifyClientPid, &Int32{int32(os.Getpid())}, nil)
+	c.WriteServer(MsgIdentifyTerm, &String{os.Getenv("TERM")}, nil)
 	cwd, err := os.Open(".")
 	if err != nil {
 		return fmt.Errorf("Open(.): %s", err)
 	}
 	c.WriteServer(MsgIdentifyCWD, &Nil{}, cwd)
-	devnull, err := os.Open("/dev/null")
+	stdin, err := syscall.Dup(int(os.Stdin.Fd()))
 	if err != nil {
-		return fmt.Errorf("Open(/dev/null): %s", err)
+		return fmt.Errorf("Dup(stdin): %s", err)
 	}
-	c.WriteServer(MsgIdentifyStdin, &Nil{}, devnull)
+	c.WriteServer(MsgIdentifyStdin, &Nil{}, os.NewFile(uintptr(stdin), "/dev/stdin"))
 	c.WriteServer(MsgIdentifyDone, &Nil{}, nil)
 
 	return nil
