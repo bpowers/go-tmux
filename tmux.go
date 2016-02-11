@@ -156,7 +156,7 @@ func SwitchClient(tty, target string) error {
 
 func NewSession(sessionName, windowName string, args ...string) (Session, error) {
 	cmdArgs := make([]string, 0, 16)
-	cmdArgs = append(cmdArgs, "new-session", "-d", "-s", sessionName)
+	cmdArgs = append(cmdArgs, "new-session", "-c", "/", "-d", "-s", sessionName)
 	if windowName != "" {
 		cmdArgs = append(cmdArgs, "-n", windowName)
 	}
