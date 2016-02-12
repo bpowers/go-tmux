@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"syscall"
 )
 
@@ -26,11 +27,12 @@ const (
 	MsgIdentifyFlags MsgType = 100 + iota
 	MsgIdentifyTerm
 	MsgIdentifyTTYName
-	MsgIdentifyCWD
+	MsgIdentifyOldCWD
 	MsgIdentifyStdin
 	MsgIdentifyEnviron
 	MsgIdentifyDone
 	MsgIdentifyClientPid
+	MsgIdentifyCWD
 )
 
 const (
@@ -209,11 +211,16 @@ func (c *client) sendIdentify(flags ClientFlag) error {
 	c.WriteServer(MsgIdentifyFlags, &Int32{int32(flags)}, nil)
 	c.WriteServer(MsgIdentifyClientPid, &Int32{int32(os.Getpid())}, nil)
 	c.WriteServer(MsgIdentifyTerm, &String{os.Getenv("TERM")}, nil)
-	cwd, err := os.Open(".")
+	//cwd, err := os.Open(".")
+	//if err != nil {
+	//	return fmt.Errorf("Open(.): %s", err)
+	//}
+	//c.WriteServer(MsgIdentifyOldCWD, &Nil{}, cwd)
+	cwd, err := filepath.Abs(".")
 	if err != nil {
-		return fmt.Errorf("Open(.): %s", err)
+		return fmt.Errorf("Abs(.): %s", err)
 	}
-	c.WriteServer(MsgIdentifyCWD, &Nil{}, cwd)
+	c.WriteServer(MsgIdentifyCWD, &String{cwd}, nil)
 	stdin, err := syscall.Dup(int(os.Stdin.Fd()))
 	if err != nil {
 		return fmt.Errorf("Dup(stdin): %s", err)
